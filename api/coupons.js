@@ -1,4 +1,4 @@
-export default function handler(req, res) {
+module.exports = function (req, res) {
   try {
     // CORS for Chrome extensions
     res.setHeader("Access-Control-Allow-Origin", "*");
@@ -9,13 +9,14 @@ export default function handler(req, res) {
       return res.status(200).end();
     }
 
-    const { url } = req.query;
+    const url = req.query.url;
 
     if (!url) {
       return res.status(400).json({ error: "Missing url parameter" });
     }
 
-    const hostname = new URL(url).hostname.replace("www.", "");
+    const parsed = new URL(url);
+    const hostname = parsed.hostname.replace("www.", "");
     const brand = hostname.split(".")[0];
 
     const couponSites = [
@@ -45,10 +46,10 @@ export default function handler(req, res) {
     });
 
   } catch (err) {
-    console.error("API crash:", err);
+    console.error("Coupon API crash:", err);
     return res.status(500).json({
       error: "Internal server error",
       details: err.message
     });
   }
-}
+};
