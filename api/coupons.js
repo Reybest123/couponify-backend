@@ -1,204 +1,61 @@
-import express from "express";
-import fetch from "node-fetch";
-import cors from "cors";
+import axios from "axios";
 
-const app = express();
-app.use(cors());
+export default async function handler(req, res) {
+  // CORS (required for Chrome extensions)
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-const PORT = process.env.PORT || 3000;
-const SERPAPI_KEY = process.env.SERPAPI_KEY;
-
-if (!SERPAPI_KEY) {
-  console.error("❌ SERPAPI_KEY is missing");
-}
-
-// ---------- HELPERS ----------
-
-function getDomain(url) {
-  try {
-    return new URL(url).hostname.replace("www.", "");
-  } catch {
-    return null;
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
   }
-}
 
-function getBrand(domain) {
-  return domain.split(".")[0];
-}
-
-/**
- * VERY STRICT coupon extraction
- * - Only if explicitly mentioned
- * - Long, non-generic codes only
- * - Heavy blacklist
- */
-function extractRealCouponCodes(text) {
-  if (!/(use code|promo code|coupon code)/i.test(text)) return [];
-
-  const matches = text.match(/\b[A-Z0-9]{8,15}\b/g) || [];
-
-  const blacklist = [
-    "WELCOME",
-    "SAVE",
-    "DISCOUNT",
-    "OFF",
-    "DEAL",
-    "PROMO",
-    "ORDER",
-    "ONLINE",
-    "SHOP",
-    "SALE",
-    "EXAMPLE",
-    "CODE"
-  ];
-
-  return matches.filter(code =>
-    !blacklist.some(word => code.includes(word))
-  );
-}
-
-function confidenceFromText(text) {
-  if (/verified|official|working/i.test(text)) return "High";
-  if (/reported|may work/i.test(text)) return "Medium";
-  return "Low";
-}
-
-/**
- * Reject base pages and non-brand pages
- */
-function isValidCouponPage(url, brand) {
   try {
-    const u = new URL(url);
-    const path = u.pathname.toLowerCase();
-    const b = brand.toLowerCase();
+    const { url } = req.query;
 
-    if (!path.includes(b)) return false;
-    if (path === "/" || path.length < 6) return false;
-
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-// ---------- MAIN ROUTE ----------
-
-app.get("/api/coupons", async (req, res) => {
-  try {
-    const pageUrl = req.query.url;
-    const forceSearch = req.query.search === "true";
-
-    if (!pageUrl || !forceSearch) {
-      return res.json({
-        coupons: [],
-        couponSites: [],
-        message: "Search not triggered"
+    if (!url) {
+      return res.status(400).json({
+        error: "Missing url parameter"
       });
     }
 
-    const domain = getDomain(pageUrl);
-    if (!domain) {
-      return res.json({
-        coupons: [],
-        couponSites: [],
-        message: "Invalid URL"
-      });
-    }
+    const hostname = new URL(url).hostname.replace("www.", "");
+    const brand = hostname.split(".")[0];
 
-    const brand = getBrand(domain);
-
-    const query = `"${brand}" coupon code`;
-
-    const serpRes = await fetch(
-      `https://serpapi.com/search.json?q=${encodeURIComponent(
-        query
-      )}&engine=google&api_key=${SERPAPI_KEY}`
-    );
-
-    const data = await serpRes.json();
-
-    // ---------- COUPON CODE EXTRACTION ----------
-
-    const coupons = [];
-
-    (data.organic_results || []).forEach(r => {
-      if (!r.snippet) return;
-
-      const codes = extractRealCouponCodes(r.snippet);
-      const confidence = confidenceFromText(r.snippet);
-
-      // FAIL CLOSED: reject low confidence entirely
-      if (confidence === "Low") return;
-
-      codes.forEach(code => {
-        coupons.push({
-          code,
-          description: r.snippet.slice(0, 120),
-          confidence
-        });
-      });
-    });
-
-    const uniqueCoupons = Object.values(
-      coupons.reduce((acc, c) => {
-        acc[c.code] ??= c;
-        return acc;
-      }, {})
-    );
-
-    // ---------- COUPON WEBSITES (STRICT) ----------
-
-    const couponSites = [];
-
-    (data.organic_results || []).forEach(r => {
-      if (
-        r.link &&
-        /(coupon|promo|deal)/i.test(r.link) &&
-        isValidCouponPage(r.link, brand)
-      ) {
-        couponSites.push({
-          name: new URL(r.link).hostname.replace("www.", ""),
-          url: r.link
-        });
+    // ✅ Trusted coupon aggregators ONLY
+    // ❌ No AI = no hallucinations
+    const couponSites = [
+      {
+        name: "RetailMeNot",
+        url: `https://www.retailmenot.com/view/${hostname}`
+      },
+      {
+        name: "Coupons.com",
+        url: `https://www.coupons.com/coupon-codes/${brand}`
+      },
+      {
+        name: "Groupon",
+        url: `https://www.groupon.com/coupons/${brand}`
+      },
+      {
+        name: "Honey",
+        url: `https://www.joinhoney.com/shop/${brand}`
       }
+    ];
+
+    return res.status(200).json({
+      coupons: [], // intentionally empty
+      couponSites,
+      message:
+        "Sorry, no reliable public coupon codes were found. However, these websites often list working deals."
     });
 
-    // Deduplicate sites
-    const uniqueSites = Object.values(
-      couponSites.reduce((acc, s) => {
-        acc[s.url] ??= s;
-        return acc;
-      }, {})
-    );
+  } catch (error) {
+    console.error("Coupon API error:", error);
 
-    // ---------- FINAL SAFETY ----------
-
-    if (uniqueCoupons.length === 0) {
-      return res.json({
-        coupons: [],
-        couponSites: uniqueSites,
-        message:
-          "Sorry, no reliable public coupon codes were found. However, these websites often list working deals."
-      });
-    }
-
-    res.json({
-      coupons: uniqueCoupons,
-      couponSites: uniqueSites
-    });
-
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({
-      coupons: [],
-      couponSites: [],
-      message: "Server error"
+    return res.status(500).json({
+      error: "Internal server error",
+      details: error.message
     });
   }
-});
-
-// ---------- START ----------
-
-app.listen(PORT, () => {
-  console.log(`✅ Backend running on port ${PORT}`);
-});
+}
