@@ -28,14 +28,6 @@ module.exports = function (req, res) {
         name: "Coupons.com",
         url: `https://www.coupons.com/coupon-codes/${brand}`
       },
-      {
-        name: "Groupon",
-        url: `https://www.groupon.com/coupons/${brand}`
-      },
-      {
-        name: "Honey",
-        url: `https://www.joinhoney.com/shop/${brand}`
-      }
     ];
 
     return res.status(200).json({
@@ -53,3 +45,4 @@ module.exports = function (req, res) {
     });
   }
 };
+
