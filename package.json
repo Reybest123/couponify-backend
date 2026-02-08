@@ -1,12 +1,9 @@
 {
   "name": "couponify-backend",
   "version": "1.0.0",
-  "description": "Backend API for the Couponify Chrome Extension",
   "private": true,
-  "engines": {
-    "node": ">=18"
-  },
+  "type": "module",
   "dependencies": {
-    "axios": "^1.6.0"
+    "axios": "^1.6.8"
   }
 }
