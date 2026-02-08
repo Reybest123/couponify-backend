@@ -1,8 +1,101 @@
-const axios = require("axios");
+import axios from "axios";
 
-module.exports = async function (req, res) {
+const TRUSTED_SITES = ["RetailMeNot", "Honey", "Groupon", "Coupons.com"];
+
+/**
+ * Detect region from store domain
+ */
+function detectRegion(hostname) {
+  if (hostname.endsWith(".com.au")) return "AU";
+  if (hostname.endsWith(".co.uk")) return "UK";
+  if (hostname.endsWith(".ca")) return "CA";
+  return "US";
+}
+
+/**
+ * Extract brand slug from hostname
+ * nike.com.au -> nike
+ * adidas.co.uk -> adidas
+ */
+function extractBrand(hostname) {
+  return hostname.replace(/^www\./, "").split(".")[0];
+}
+
+/**
+ * Generate structured coupon URLs per region
+ */
+function generateUrls({ hostname, brand, region }) {
+  const urls = [];
+
+  // ---- RetailMeNot (uses full domain) ----
+  urls.push({
+    name: "RetailMeNot",
+    url: `https://www.retailmenot.com/view/${hostname}`
+  });
+
+  // ---- Honey (brand slug only, global) ----
+  urls.push({
+    name: "Honey",
+    url: `https://www.joinhoney.com/shop/${brand}`
+  });
+
+  // ---- Groupon (region-specific quirks) ----
+  if (region === "AU") {
+    urls.push({
+      name: "Groupon",
+      url: `https://www.groupon.com.au/vouchers/${brand}`
+    });
+    urls.push({
+      name: "Groupon",
+      url: `https://www.groupon.com.au/vouchers/${brand}-au`
+    });
+  } else {
+    urls.push({
+      name: "Groupon",
+      url: `https://www.groupon.com/coupons/${brand}`
+    });
+  }
+
+  // ---- Coupons.com (brand slug only) ----
+  urls.push({
+    name: "Coupons.com",
+    url: `https://www.coupons.com/coupon-codes/${brand}`
+  });
+
+  return urls;
+}
+
+/**
+ * Validate URL with lightweight request
+ */
+async function isValidUrl(url) {
   try {
-    // ---- CORS (Chrome extension safe) ----
+    const res = await axios.get(url, {
+      maxRedirects: 5,
+      timeout: 6000,
+      validateStatus: status => status >= 200 && status < 400
+    });
+
+    // Reject homepage redirects or obvious failures
+    if (!res.request?.res?.responseUrl) return false;
+
+    const finalUrl = res.request.res.responseUrl.toLowerCase();
+    if (
+      finalUrl === "https://www.groupon.com.au/" ||
+      finalUrl === "https://www.groupon.com/" ||
+      finalUrl === "https://www.coupons.com/"
+    ) {
+      return false;
+    }
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export default async function handler(req, res) {
+  try {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type");
@@ -11,125 +104,35 @@ module.exports = async function (req, res) {
       return res.status(200).end();
     }
 
-    const pageUrl = req.query.url;
-    if (!pageUrl) {
+    const inputUrl = req.query.url;
+    if (!inputUrl) {
       return res.status(400).json({ error: "Missing url parameter" });
     }
 
-    // ---- URL PARSING ----
-    const parsed = new URL(pageUrl);
+    const parsed = new URL(inputUrl);
     const hostname = parsed.hostname.replace(/^www\./, "");
-    const parts = hostname.split(".");
-    const brand = parts.length >= 3 ? parts[parts.length - 2] : parts[0];
+    const brand = extractBrand(hostname);
+    const region = detectRegion(hostname);
 
-    // ---- BASELINE (ALWAYS SAFE) ----
-    const baselineSites = [
-      {
-        name: "RetailMeNot",
-        url: `https://www.retailmenot.com/view/${hostname}`,
-        confidence: "high",
-        source: "baseline"
-      },
-      {
-        name: "Honey",
-        url: `https://www.joinhoney.com/shop/${brand}`,
-        confidence: "medium",
-        source: "baseline"
-      },
-      {
-        name: "Groupon",
-        url: `https://www.groupon.com/coupons/${brand}`,
-        confidence: "medium",
-        source: "baseline"
+    const generated = generateUrls({ hostname, brand, region });
+
+    const validated = [];
+    for (const site of generated) {
+      if (!TRUSTED_SITES.includes(site.name)) continue;
+      if (await isValidUrl(site.url)) {
+        validated.push(site);
       }
-    ];
-
-    // ---- BLOCK SERPAPI FOR BAD BRANDS (SAVE MONEY) ----
-    const blockedBrands = [
-      "amazon",
-      "apple",
-      "steam",
-      "google",
-      "playstation",
-      "xbox"
-    ];
-
-    const serpapiEnabled =
-      process.env.SERPAPI_KEY &&
-      !blockedBrands.includes(brand.toLowerCase());
-
-    // ---- TRUSTED DOMAIN WHITELIST + RANKING ----
-    const trustedDomains = {
-      "retailmenot.com": 100,
-      "offers.com": 90,
-      "dealspotr.com": 85,
-      "couponbirds.com": 80,
-      "couponfollow.com": 75
-    };
-
-    let serpapiSites = [];
-
-    // ---- SERPAPI ENHANCEMENT (CONDITIONAL) ----
-    if (serpapiEnabled) {
-      const serpResponse = await axios.get(
-        "https://serpapi.com/search.json",
-        {
-          params: {
-            engine: "google",
-            q: `${brand} coupon codes`,
-            api_key: process.env.SERPAPI_KEY,
-            num: 10
-          },
-          timeout: 4000
-        }
-      );
-
-      const results = serpResponse.data.organic_results || [];
-
-      serpapiSites = results
-        .map(r => {
-          try {
-            const u = new URL(r.link);
-            const domain = u.hostname.replace(/^www\./, "");
-
-            if (!trustedDomains[domain]) return null;
-
-            return {
-              name: domain.replace(".com", ""),
-              url: r.link,
-              confidence: trustedDomains[domain] >= 90 ? "high" : "medium",
-              source: "search",
-              rank: trustedDomains[domain]
-            };
-          } catch {
-            return null;
-          }
-        })
-        .filter(Boolean)
-        .sort((a, b) => b.rank - a.rank)
-        .slice(0, 3);
     }
 
-    // ---- A/B LOGIC: BASELINE vs SEARCH-ENHANCED ----
-    const finalSites =
-      serpapiSites.length > 0
-        ? [...baselineSites, ...serpapiSites]
-        : baselineSites;
-
     return res.status(200).json({
-      coupons: [], // Couponify does NOT auto-reveal codes
       brand,
-      hostname,
-      serpapiUsed: Boolean(serpapiSites.length),
-      couponSites: finalSites,
-      message:
-        "Couponify searches trusted sources for coupon pages. Deals are revealed directly on partner websites."
+      region,
+      couponSites: validated
     });
-
   } catch (err) {
-    console.error("Couponify API error:", err.message);
+    console.error("Couponify backend error:", err);
     return res.status(500).json({
       error: "Internal server error"
     });
   }
-};
+}
