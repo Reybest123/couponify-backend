@@ -14,19 +14,16 @@ function extractBrand(hostname) {
 function generateUrls({ hostname, brand, region }) {
   const urls = [];
 
-  // RetailMeNot — use brand slug, not full hostname (hostname causes 404s)
   urls.push({
     name: "RetailMeNot",
     url: `https://www.retailmenot.com/view/${brand}.com`
   });
 
-  // Honey
   urls.push({
     name: "Honey",
     url: `https://www.joinhoney.com/shop/${brand}`
   });
 
-  // Groupon — /coupons/ path works for both US and AU; .com.au often 404s on vouchers path
   if (region === "AU") {
     urls.push({
       name: "Groupon",
@@ -39,7 +36,6 @@ function generateUrls({ hostname, brand, region }) {
     });
   }
 
-  // Coupons.com
   urls.push({
     name: "Coupons.com",
     url: `https://www.coupons.com/coupon-codes/${brand}`
