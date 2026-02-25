@@ -1,5 +1,8 @@
 const TRUSTED_SITES = ["RetailMeNot", "Honey", "Groupon", "Coupons.com"];
 
+// Sites that return proper 404s for unknown brands — safe to check
+const CHECKABLE_SITES = ["Honey", "Coupons.com"];
+
 function detectRegion(hostname) {
   if (hostname.endsWith(".com.au")) return "AU";
   if (hostname.endsWith(".co.uk")) return "UK";
@@ -18,17 +21,11 @@ async function checkUrl(url) {
       method: "HEAD",
       redirect: "follow"
     });
-
-    // 404 and 410 are definitive "not found" responses — filter these out
-    // Everything else (200, 301, 302, 403, 429, 500 etc) we treat as "exists"
-    // because RetailMeNot and Groupon block HEAD requests with 403/405
-    // but the page itself is valid
     if (res.status === 404 || res.status === 410) {
       return false;
     }
     return true;
   } catch {
-    // Network error — include it anyway, don't punish sites for CORS issues
     return true;
   }
 }
@@ -37,38 +34,48 @@ async function generateUrls({ hostname, brand, region }) {
   const brandSlug = brand.toLowerCase();
   const candidates = [];
 
+  // RetailMeNot — always include, never 404s properly
   candidates.push({
     name: "RetailMeNot",
-    url: `https://www.retailmenot.com/view/${brandSlug}.com`
+    url: `https://www.retailmenot.com/view/${brandSlug}.com`,
+    alwaysInclude: true
   });
 
+  // Honey — returns proper 404s, safe to check
   candidates.push({
     name: "Honey",
-    url: `https://www.joinhoney.com/shop/${brandSlug}`
+    url: `https://www.joinhoney.com/shop/${brandSlug}`,
+    alwaysInclude: false
   });
 
+  // Groupon — always include, never 404s properly, fixed AU path to /vouchers/
   if (region === "AU") {
     candidates.push({
       name: "Groupon",
-      url: `https://www.groupon.com.au/coupons/${brandSlug}`
+      url: `https://www.groupon.com.au/vouchers/${brandSlug}`,
+      alwaysInclude: true
     });
   } else {
     candidates.push({
       name: "Groupon",
-      url: `https://www.groupon.com/coupons/${brandSlug}`
+      url: `https://www.groupon.com/coupons/${brandSlug}`,
+      alwaysInclude: true
     });
   }
 
+  // Coupons.com — returns proper 404s, safe to check
   candidates.push({
     name: "Coupons.com",
-    url: `https://www.coupons.com/coupon-codes/${brandSlug}`
+    url: `https://www.coupons.com/coupon-codes/${brandSlug}`,
+    alwaysInclude: false
   });
 
   const filtered = candidates.filter(site => TRUSTED_SITES.includes(site.name));
 
-  // Check all URLs in parallel — only filter out definitive 404/410 responses
+  // Only run 404 checks on sites that actually return proper 404s
   const results = await Promise.all(
     filtered.map(async (site) => {
+      if (site.alwaysInclude) return site;
       const ok = await checkUrl(site.url);
       return ok ? site : null;
     })
