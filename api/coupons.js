@@ -8,44 +8,65 @@ function detectRegion(hostname) {
 }
 
 function extractBrand(hostname) {
-  const raw = hostname.replace(/^www\./, "").split(".")[0];
-  // Capitalize first letter of brand name
+  // Strip www followed by any numbers (e.g. www2, www3) as well as plain www
+  const raw = hostname.replace(/^www\d*\./, "").split(".")[0];
+  // Capitalize first letter
   return raw.charAt(0).toUpperCase() + raw.slice(1);
 }
 
-function generateUrls({ hostname, brand, region }) {
-  // Use lowercase brand for URLs since coupon sites expect lowercase slugs
-  const brandSlug = brand.toLowerCase();
-  const urls = [];
+async function checkUrl(url) {
+  try {
+    const res = await fetch(url, { method: "HEAD", redirect: "follow" });
+    // Some coupon sites return 200 even for missing brands, but return 404 for truly bad URLs
+    return res.ok;
+  } catch {
+    // If fetch fails entirely (network error etc), include it anyway
+    return true;
+  }
+}
 
-  urls.push({
+async function generateUrls({ hostname, brand, region }) {
+  const brandSlug = brand.toLowerCase();
+  const candidates = [];
+
+  candidates.push({
     name: "RetailMeNot",
     url: `https://www.retailmenot.com/view/${brandSlug}.com`
   });
 
-  urls.push({
+  candidates.push({
     name: "Honey",
     url: `https://www.joinhoney.com/shop/${brandSlug}`
   });
 
   if (region === "AU") {
-    urls.push({
+    candidates.push({
       name: "Groupon",
       url: `https://www.groupon.com.au/coupons/${brandSlug}`
     });
   } else {
-    urls.push({
+    candidates.push({
       name: "Groupon",
       url: `https://www.groupon.com/coupons/${brandSlug}`
     });
   }
 
-  urls.push({
+  candidates.push({
     name: "Coupons.com",
     url: `https://www.coupons.com/coupon-codes/${brandSlug}`
   });
 
-  return urls.filter(site => TRUSTED_SITES.includes(site.name));
+  const filtered = candidates.filter(site => TRUSTED_SITES.includes(site.name));
+
+  // Check all URLs in parallel — as fast as the slowest single request
+  const results = await Promise.all(
+    filtered.map(async (site) => {
+      const ok = await checkUrl(site.url);
+      return ok ? site : null;
+    })
+  );
+
+  return results.filter(Boolean);
 }
 
 export default async function handler(req, res) {
@@ -64,11 +85,11 @@ export default async function handler(req, res) {
     }
 
     const parsed = new URL(inputUrl);
-    const hostname = parsed.hostname.replace(/^www\./, "");
+    const hostname = parsed.hostname.replace(/^www\d*\./, "");
     const brand = extractBrand(hostname);
     const region = detectRegion(hostname);
 
-    const generated = generateUrls({ hostname, brand, region });
+    const generated = await generateUrls({ hostname, brand, region });
 
     return res.status(200).json({
       brand,
