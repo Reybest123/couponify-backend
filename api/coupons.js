@@ -1,8 +1,5 @@
 const TRUSTED_SITES = ["RetailMeNot", "Honey", "Groupon", "Coupons.com"];
 
-// Sites that return proper 404s for unknown brands — safe to check
-const CHECKABLE_SITES = ["Honey", "Coupons.com"];
-
 function detectRegion(hostname) {
   if (hostname.endsWith(".com.au")) return "AU";
   if (hostname.endsWith(".co.uk")) return "UK";
@@ -15,16 +12,49 @@ function extractBrand(hostname) {
   return raw.charAt(0).toUpperCase() + raw.slice(1);
 }
 
-async function checkUrl(url) {
+// For sites that return proper 404s — fast HEAD check
+async function checkHead(url) {
   try {
-    const res = await fetch(url, {
-      method: "HEAD",
-      redirect: "follow"
-    });
-    if (res.status === 404 || res.status === 410) {
+    const res = await fetch(url, { method: "HEAD", redirect: "follow" });
+    return res.status !== 404 && res.status !== 410;
+  } catch {
+    return true;
+  }
+}
+
+// For RetailMeNot — fetch page and check if it redirected back to homepage
+async function checkRetailMeNot(url, brandSlug) {
+  try {
+    const res = await fetch(url, { method: "GET", redirect: "follow" });
+    // If we got redirected to the homepage it means brand wasn't found
+    const finalUrl = res.url;
+    if (
+      finalUrl === "https://www.retailmenot.com/" ||
+      finalUrl === "https://www.retailmenot.com" ||
+      !finalUrl.includes(brandSlug)
+    ) {
       return false;
     }
     return true;
+  } catch {
+    return true;
+  }
+}
+
+// For Groupon — fetch page and check if it shows generic deals vs brand page
+async function checkGroupon(url, brandSlug) {
+  try {
+    const res = await fetch(url, { method: "GET", redirect: "follow" });
+    const finalUrl = res.url;
+    // If redirected away from the brand URL it's generic
+    if (!finalUrl.includes(brandSlug)) {
+      return false;
+    }
+    // Read a chunk of the page and check for the brand name in the content
+    const text = await res.text();
+    const lower = text.toLowerCase();
+    // If the page mentions the brand slug it's a real brand page
+    return lower.includes(brandSlug.toLowerCase());
   } catch {
     return true;
   }
@@ -34,50 +64,54 @@ async function generateUrls({ hostname, brand, region }) {
   const brandSlug = brand.toLowerCase();
   const candidates = [];
 
-  // RetailMeNot — always include, never 404s properly
   candidates.push({
     name: "RetailMeNot",
     url: `https://www.retailmenot.com/view/${brandSlug}.com`,
-    alwaysInclude: true
+    check: () => checkRetailMeNot(
+      `https://www.retailmenot.com/view/${brandSlug}.com`,
+      brandSlug
+    )
   });
 
-  // Honey — returns proper 404s, safe to check
   candidates.push({
     name: "Honey",
     url: `https://www.joinhoney.com/shop/${brandSlug}`,
-    alwaysInclude: false
+    check: () => checkHead(`https://www.joinhoney.com/shop/${brandSlug}`)
   });
 
-  // Groupon — always include, never 404s properly, fixed AU path to /vouchers/
   if (region === "AU") {
     candidates.push({
       name: "Groupon",
       url: `https://www.groupon.com.au/vouchers/${brandSlug}`,
-      alwaysInclude: true
+      check: () => checkGroupon(
+        `https://www.groupon.com.au/vouchers/${brandSlug}`,
+        brandSlug
+      )
     });
   } else {
     candidates.push({
       name: "Groupon",
       url: `https://www.groupon.com/coupons/${brandSlug}`,
-      alwaysInclude: true
+      check: () => checkGroupon(
+        `https://www.groupon.com/coupons/${brandSlug}`,
+        brandSlug
+      )
     });
   }
 
-  // Coupons.com — returns proper 404s, safe to check
   candidates.push({
     name: "Coupons.com",
     url: `https://www.coupons.com/coupon-codes/${brandSlug}`,
-    alwaysInclude: false
+    check: () => checkHead(`https://www.coupons.com/coupon-codes/${brandSlug}`)
   });
 
   const filtered = candidates.filter(site => TRUSTED_SITES.includes(site.name));
 
-  // Only run 404 checks on sites that actually return proper 404s
+  // Run all checks in parallel
   const results = await Promise.all(
     filtered.map(async (site) => {
-      if (site.alwaysInclude) return site;
-      const ok = await checkUrl(site.url);
-      return ok ? site : null;
+      const ok = await site.check();
+      return ok ? { name: site.name, url: site.url } : null;
     })
   );
 
