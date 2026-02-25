@@ -12,7 +12,6 @@ function extractBrand(hostname) {
   return raw.charAt(0).toUpperCase() + raw.slice(1);
 }
 
-// For sites that return proper 404s — fast HEAD check
 async function checkHead(url) {
   try {
     const res = await fetch(url, { method: "HEAD", redirect: "follow" });
@@ -22,100 +21,52 @@ async function checkHead(url) {
   }
 }
 
-// For RetailMeNot — fetch page and check if it redirected back to homepage
-async function checkRetailMeNot(url, brandSlug) {
-  try {
-    const res = await fetch(url, { method: "GET", redirect: "follow" });
-    // If we got redirected to the homepage it means brand wasn't found
-    const finalUrl = res.url;
-    if (
-      finalUrl === "https://www.retailmenot.com/" ||
-      finalUrl === "https://www.retailmenot.com" ||
-      !finalUrl.includes(brandSlug)
-    ) {
-      return false;
-    }
-    return true;
-  } catch {
-    return true;
-  }
-}
-
-// For Groupon — fetch page and check if it shows generic deals vs brand page
-async function checkGroupon(url, brandSlug) {
-  try {
-    const res = await fetch(url, { method: "GET", redirect: "follow" });
-    const finalUrl = res.url;
-    // If redirected away from the brand URL it's generic
-    if (!finalUrl.includes(brandSlug)) {
-      return false;
-    }
-    // Read a chunk of the page and check for the brand name in the content
-    const text = await res.text();
-    const lower = text.toLowerCase();
-    // If the page mentions the brand slug it's a real brand page
-    return lower.includes(brandSlug.toLowerCase());
-  } catch {
-    return true;
-  }
-}
-
-async function generateUrls({ hostname, brand, region }) {
+async function generateUrls({ brand, region }) {
   const brandSlug = brand.toLowerCase();
-  const candidates = [];
 
-  candidates.push({
+  // Check Honey and Coupons.com in parallel first
+  const [honeyOk, couponsOk] = await Promise.all([
+    checkHead(`https://www.joinhoney.com/shop/${brandSlug}`),
+    checkHead(`https://www.coupons.com/coupon-codes/${brandSlug}`)
+  ]);
+
+  // If neither Honey nor Coupons.com has this brand, return empty
+  // This means the banner won't show and no results will be displayed
+  if (!honeyOk && !couponsOk) {
+    return [];
+  }
+
+  // At least one verified result — now build the full list
+  const results = [];
+
+  // Always include RetailMeNot and Groupon if we have at least one verified site
+  results.push({
     name: "RetailMeNot",
-    url: `https://www.retailmenot.com/view/${brandSlug}.com`,
-    check: () => checkRetailMeNot(
-      `https://www.retailmenot.com/view/${brandSlug}.com`,
-      brandSlug
-    )
+    url: `https://www.retailmenot.com/view/${brandSlug}.com`
   });
 
-  candidates.push({
-    name: "Honey",
-    url: `https://www.joinhoney.com/shop/${brandSlug}`,
-    check: () => checkHead(`https://www.joinhoney.com/shop/${brandSlug}`)
-  });
-
-  if (region === "AU") {
-    candidates.push({
-      name: "Groupon",
-      url: `https://www.groupon.com.au/vouchers/${brandSlug}`,
-      check: () => checkGroupon(
-        `https://www.groupon.com.au/vouchers/${brandSlug}`,
-        brandSlug
-      )
-    });
-  } else {
-    candidates.push({
-      name: "Groupon",
-      url: `https://www.groupon.com/coupons/${brandSlug}`,
-      check: () => checkGroupon(
-        `https://www.groupon.com/coupons/${brandSlug}`,
-        brandSlug
-      )
+  if (honeyOk) {
+    results.push({
+      name: "Honey",
+      url: `https://www.joinhoney.com/shop/${brandSlug}`
     });
   }
 
-  candidates.push({
-    name: "Coupons.com",
-    url: `https://www.coupons.com/coupon-codes/${brandSlug}`,
-    check: () => checkHead(`https://www.coupons.com/coupon-codes/${brandSlug}`)
+  results.push({
+    name: "Groupon",
+    url: region === "AU"
+      ? `https://www.groupon.com.au/vouchers/${brandSlug}`
+      : `https://www.groupon.com/coupons/${brandSlug}`
   });
 
-  const filtered = candidates.filter(site => TRUSTED_SITES.includes(site.name));
+  if (couponsOk) {
+    results.push({
+      name: "Coupons.com",
+      url: `https://www.coupons.com/coupon-codes/${brandSlug}`
+    });
+  }
 
-  // Run all checks in parallel
-  const results = await Promise.all(
-    filtered.map(async (site) => {
-      const ok = await site.check();
-      return ok ? { name: site.name, url: site.url } : null;
-    })
-  );
-
-  return results.filter(Boolean);
+  return results.filter(site => TRUSTED_SITES.includes(site.name));
 }
 
 export default async function handler(req, res) {
@@ -138,7 +89,7 @@ export default async function handler(req, res) {
     const brand = extractBrand(hostname);
     const region = detectRegion(hostname);
 
-    const generated = await generateUrls({ hostname, brand, region });
+    const generated = await generateUrls({ brand, region });
 
     return res.status(200).json({
       brand,
