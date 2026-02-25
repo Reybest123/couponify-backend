@@ -8,37 +8,41 @@ function detectRegion(hostname) {
 }
 
 function extractBrand(hostname) {
-  return hostname.replace(/^www\./, "").split(".")[0];
+  const raw = hostname.replace(/^www\./, "").split(".")[0];
+  // Capitalize first letter of brand name
+  return raw.charAt(0).toUpperCase() + raw.slice(1);
 }
 
 function generateUrls({ hostname, brand, region }) {
+  // Use lowercase brand for URLs since coupon sites expect lowercase slugs
+  const brandSlug = brand.toLowerCase();
   const urls = [];
 
   urls.push({
     name: "RetailMeNot",
-    url: `https://www.retailmenot.com/view/${brand}.com`
+    url: `https://www.retailmenot.com/view/${brandSlug}.com`
   });
 
   urls.push({
     name: "Honey",
-    url: `https://www.joinhoney.com/shop/${brand}`
+    url: `https://www.joinhoney.com/shop/${brandSlug}`
   });
 
   if (region === "AU") {
     urls.push({
       name: "Groupon",
-      url: `https://www.groupon.com.au/coupons/${brand}`
+      url: `https://www.groupon.com.au/coupons/${brandSlug}`
     });
   } else {
     urls.push({
       name: "Groupon",
-      url: `https://www.groupon.com/coupons/${brand}`
+      url: `https://www.groupon.com/coupons/${brandSlug}`
     });
   }
 
   urls.push({
     name: "Coupons.com",
-    url: `https://www.coupons.com/coupon-codes/${brand}`
+    url: `https://www.coupons.com/coupon-codes/${brandSlug}`
   });
 
   return urls.filter(site => TRUSTED_SITES.includes(site.name));
