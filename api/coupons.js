@@ -1,196 +1,114 @@
-const SHOPPING_KEYWORDS = [
-  "cart", "checkout", "shop", "store", "buy", "product", "order",
-  "basket", "shipping", "add to cart", "wishlist", "payment",
-  "price", "discount", "sale", "delivery", "purchase", "returns"
-];
+const TRUSTED_SITES = ["RetailMeNot", "Honey", "Groupon", "Coupons.com"];
 
-const COUPON_SITE_DOMAINS = [
-  "retailmenot.com", "joinhoney.com", "groupon.com", "coupons.com",
-  "groupon.com.au"
-];
-
-const IGNORED_DOMAINS = [
-  "google.com", "youtube.com", "facebook.com", "twitter.com",
-  "instagram.com", "reddit.com", "wikipedia.org", "github.com",
-  "gmail.com", "mail.google.com", "linkedin.com", "tiktok.com",
-  "twitch.tv", "discord.com", "slack.com", "netflix.com", "spotify.com",
-  "couponify-backend.vercel.app"
-];
-
-function isShoppingSite() {
-  const hostname = window.location.hostname.replace(/^www\d*\./, "");
-
-  if (COUPON_SITE_DOMAINS.some(d => hostname.includes(d))) return false;
-  if (IGNORED_DOMAINS.some(d => hostname.includes(d))) return false;
-
-  const bodyText = document.body.innerText.toLowerCase();
-  const metaDesc = document.querySelector('meta[name="description"]')?.content?.toLowerCase() || "";
-  const titleText = document.title.toLowerCase();
-  const combined = bodyText.slice(0, 5000) + metaDesc + titleText;
-
-  const matchCount = SHOPPING_KEYWORDS.filter(kw => combined.includes(kw)).length;
-  return matchCount >= 5;
+function detectRegion(hostname) {
+  if (hostname.endsWith(".com.au")) return "AU";
+  if (hostname.endsWith(".co.uk")) return "UK";
+  if (hostname.endsWith(".ca")) return "CA";
+  return "US";
 }
 
-function createBanner() {
-  // Remove any existing banner first
-  const existing = document.getElementById("couponify-host");
-  if (existing) existing.remove();
-
-  const host = document.createElement("div");
-  host.id = "couponify-host";
-
-  // Apply positioning directly to the host element
-  Object.assign(host.style, {
-    position: "fixed",
-    bottom: "20px",
-    right: "20px",
-    zIndex: "2147483647",
-    display: "block",
-    width: "auto",
-    height: "auto",
-    border: "none",
-    background: "none",
-    padding: "0",
-    margin: "0"
-  });
-
-  const shadow = host.attachShadow({ mode: "open" });
-
-  shadow.innerHTML = `
-    <style>
-      * { box-sizing: border-box; margin: 0; padding: 0; }
-
-      #banner {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        background: linear-gradient(135deg, #5f2cff, #4a90e2);
-        color: white;
-        padding: 12px 16px;
-        border-radius: 14px;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.25);
-        max-width: 360px;
-        animation: slide-in 0.4s ease forwards;
-        font-family: Inter, Arial, sans-serif;
-      }
-
-      #icon { font-size: 20px; flex-shrink: 0; }
-
-      #text {
-        font-size: 13px;
-        font-weight: 500;
-        flex: 1;
-        color: white;
-      }
-
-      #find-btn {
-        background: white;
-        color: #5f2cff;
-        border: none;
-        border-radius: 8px;
-        padding: 6px 12px;
-        font-size: 12px;
-        font-weight: 700;
-        cursor: pointer;
-        white-space: nowrap;
-        flex-shrink: 0;
-        font-family: Inter, Arial, sans-serif;
-        display: block;
-        outline: none;
-      }
-
-      #find-btn:hover { background: #f0f0f0; }
-
-      #close-btn {
-        all: unset;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: 24px;
-        height: 24px;
-        color: white;
-        font-size: 16px;
-        cursor: pointer;
-        flex-shrink: 0;
-        opacity: 0.8;
-        border-radius: 4px;
-        user-select: none;
-      }
-
-      #close-btn:hover { opacity: 1; background: rgba(255,255,255,0.15); }
-
-      @keyframes slide-in {
-        from { opacity: 0; transform: translateY(20px); }
-        to   { opacity: 1; transform: translateY(0); }
-      }
-    </style>
-
-    <div id="banner">
-      <span id="icon">🏷️</span>
-      <span id="text">Couponify found coupon sites for this store!</span>
-      <button id="find-btn">Find Coupons</button>
-      <div id="close-btn" role="button" tabindex="0">✕</div>
-    </div>
-  `;
-
-  document.body.appendChild(host);
-
-  const closeBtn = shadow.getElementById("close-btn");
-  const findBtn = shadow.getElementById("find-btn");
-
-  // Use pointerdown with capture:true — fires before the page can intercept anything
-  closeBtn.addEventListener("pointerdown", (e) => {
-    e.preventDefault();
-    e.stopImmediatePropagation();
-    host.remove();
-  }, { capture: true });
-
-  // Also handle keyboard close for accessibility
-  closeBtn.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      host.remove();
-    }
-  });
-
-  findBtn.addEventListener("pointerdown", (e) => {
-    e.preventDefault();
-    e.stopImmediatePropagation();
-    chrome.runtime.sendMessage({
-      type: "OPEN_RESULTS",
-      encodedUrl: encodeURIComponent(window.location.href)
-    });
-    host.remove();
-  }, { capture: true });
+function extractBrand(hostname) {
+  const raw = hostname.replace(/^www\d*\./, "").split(".")[0];
+  return raw.charAt(0).toUpperCase() + raw.slice(1);
 }
 
-async function checkForCouponsAndShowBanner() {
-  if (sessionStorage.getItem("couponify_banner_shown")) return;
-
+async function checkUrl(url) {
   try {
-    const response = await fetch(
-      `https://couponify-backend.vercel.app/api/coupons?url=${encodeURIComponent(window.location.href)}`
-    );
-    const data = await response.json();
-    const sites = data.couponSites || [];
+    const res = await fetch(url, {
+      method: "HEAD",
+      redirect: "follow"
+    });
 
-    // Only show banner if we actually got valid coupon sites back
-    if (sites.length === 0) return;
-
-    sessionStorage.setItem("couponify_banner_shown", "true");
-    createBanner();
-
-  } catch (err) {
-    // If backend is unreachable, silently do nothing
-    console.error("Couponify: could not check for coupons", err);
+    // 404 and 410 are definitive "not found" responses — filter these out
+    // Everything else (200, 301, 302, 403, 429, 500 etc) we treat as "exists"
+    // because RetailMeNot and Groupon block HEAD requests with 403/405
+    // but the page itself is valid
+    if (res.status === 404 || res.status === 410) {
+      return false;
+    }
+    return true;
+  } catch {
+    // Network error — include it anyway, don't punish sites for CORS issues
+    return true;
   }
 }
 
-window.addEventListener("load", () => {
-  setTimeout(() => {
-    if (isShoppingSite()) {
-      checkForCouponsAndShowBanner();
+async function generateUrls({ hostname, brand, region }) {
+  const brandSlug = brand.toLowerCase();
+  const candidates = [];
+
+  candidates.push({
+    name: "RetailMeNot",
+    url: `https://www.retailmenot.com/view/${brandSlug}.com`
+  });
+
+  candidates.push({
+    name: "Honey",
+    url: `https://www.joinhoney.com/shop/${brandSlug}`
+  });
+
+  if (region === "AU") {
+    candidates.push({
+      name: "Groupon",
+      url: `https://www.groupon.com.au/coupons/${brandSlug}`
+    });
+  } else {
+    candidates.push({
+      name: "Groupon",
+      url: `https://www.groupon.com/coupons/${brandSlug}`
+    });
+  }
+
+  candidates.push({
+    name: "Coupons.com",
+    url: `https://www.coupons.com/coupon-codes/${brandSlug}`
+  });
+
+  const filtered = candidates.filter(site => TRUSTED_SITES.includes(site.name));
+
+  // Check all URLs in parallel — only filter out definitive 404/410 responses
+  const results = await Promise.all(
+    filtered.map(async (site) => {
+      const ok = await checkUrl(site.url);
+      return ok ? site : null;
+    })
+  );
+
+  return results.filter(Boolean);
+}
+
+export default async function handler(req, res) {
+  try {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+    if (req.method === "OPTIONS") {
+      return res.status(200).end();
     }
-  }, 3000);
-});
+
+    const inputUrl = req.query.url;
+    if (!inputUrl) {
+      return res.status(400).json({ error: "Missing url parameter" });
+    }
+
+    const parsed = new URL(inputUrl);
+    const hostname = parsed.hostname.replace(/^www\d*\./, "");
+    const brand = extractBrand(hostname);
+    const region = detectRegion(hostname);
+
+    const generated = await generateUrls({ hostname, brand, region });
+
+    return res.status(200).json({
+      brand,
+      region,
+      couponSites: generated
+    });
+
+  } catch (err) {
+    console.error("Couponify backend error:", err);
+    return res.status(500).json({
+      error: "Internal server error"
+    });
+  }
+}
