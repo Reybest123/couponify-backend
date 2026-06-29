@@ -2,8 +2,5 @@
   "name": "couponify-backend",
   "version": "1.0.0",
   "private": true,
-  "type": "module",
-  "dependencies": {
-    "axios": "^1.6.8"
-  }
+  "type": "module"
 }
