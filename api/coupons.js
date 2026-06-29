@@ -1,5 +1,3 @@
-const TRUSTED_SITES = ["RetailMeNot", "Honey", "Groupon", "Coupons.com"];
-
 function detectRegion(hostname) {
   if (hostname.endsWith(".com.au")) return "AU";
   if (hostname.endsWith(".co.uk")) return "UK";
@@ -17,38 +15,40 @@ async function checkHead(url) {
     const res = await fetch(url, { method: "HEAD", redirect: "follow" });
     return res.status !== 404 && res.status !== 410;
   } catch {
-    return true;
+    return false;
   }
 }
 
 async function generateUrls({ brand, region }) {
   const brandSlug = brand.toLowerCase();
 
-  // Check Honey and Coupons.com in parallel first
   const [honeyOk, couponsOk] = await Promise.all([
     checkHead(`https://www.joinhoney.com/shop/${brandSlug}`),
     checkHead(`https://www.coupons.com/coupon-codes/${brandSlug}`)
   ]);
 
-  // If neither Honey nor Coupons.com has this brand, return empty
-  // This means the banner won't show and no results will be displayed
   if (!honeyOk && !couponsOk) {
     return [];
   }
 
-  // At least one verified result — now build the full list
+  const storeDomain = region === "AU" ? `${brandSlug}.com.au`
+    : region === "UK" ? `${brandSlug}.co.uk`
+    : region === "CA" ? `${brandSlug}.ca`
+    : `${brandSlug}.com`;
+
   const results = [];
 
-  // Always include RetailMeNot and Groupon if we have at least one verified site
   results.push({
     name: "RetailMeNot",
-    url: `https://www.retailmenot.com/view/${brandSlug}.com`
+    url: `https://www.retailmenot.com/view/${storeDomain}`,
+    verified: false
   });
 
   if (honeyOk) {
     results.push({
       name: "Honey",
-      url: `https://www.joinhoney.com/shop/${brandSlug}`
+      url: `https://www.joinhoney.com/shop/${brandSlug}`,
+      verified: true
     });
   }
 
@@ -56,17 +56,19 @@ async function generateUrls({ brand, region }) {
     name: "Groupon",
     url: region === "AU"
       ? `https://www.groupon.com.au/vouchers/${brandSlug}`
-      : `https://www.groupon.com/coupons/${brandSlug}`
+      : `https://www.groupon.com/coupons/${brandSlug}`,
+    verified: false
   });
 
   if (couponsOk) {
     results.push({
       name: "Coupons.com",
-      url: `https://www.coupons.com/coupon-codes/${brandSlug}`
+      url: `https://www.coupons.com/coupon-codes/${brandSlug}`,
+      verified: true
     });
   }
 
-  return results.filter(site => TRUSTED_SITES.includes(site.name));
+  return results;
 }
 
 export default async function handler(req, res) {
