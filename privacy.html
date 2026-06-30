@@ -91,7 +91,7 @@
   <main>
     <div class="page-label">Legal</div>
     <h1>Privacy Policy</h1>
-    <p class="last-updated">Last updated: 29 June 2026</p>
+    <p class="last-updated">Last updated: 30 June 2026</p>
 
     <div class="highlight-box">
       <p>Couponify is built with privacy at its core. We do not collect, store, or sell any personal information — ever.</p>
@@ -117,17 +117,17 @@
 
     <h2>How Shopping Detection Works</h2>
     <p>When you visit a website, Couponify scans the visible text of the current page for common shopping-related keywords such as "cart", "checkout", and "payment". This analysis runs locally in your browser and the results are never transmitted anywhere.</p>
-    <p>If the page matches enough shopping signals, a banner is shown inviting you to find coupon websites. No data leaves your device during this step.</p>
+    <p>If the page matches enough shopping signals, Couponify sends only the page's URL to its backend service to check whether coupon websites are available for that store. If coupons are found, a small, dismissible banner appears inviting you to view them. Only the URL is used for this lookup — never the page's text content.</p>
 
     <h2>Data Transmission &amp; AI Processing</h2>
-    <p>When you choose to search for coupons (either by clicking the banner or using the extension popup), only the URL of the current page is sent to Couponify's backend service. This is used solely to identify the store and generate a list of relevant coupon websites for it.</p>
+    <p>To find coupon websites for the store you're on, only the URL of the current page is sent to Couponify's backend service. This happens in two situations: automatically on detected shopping pages, to check whether coupons exist before showing the banner; and when you open results from the popup or banner. The URL is used solely to identify the store and generate a list of relevant coupon websites for it.</p>
     <p>To identify the store accurately, the backend uses an AI service (Anthropic's Claude) to interpret the website URL. Only the URL is processed — no personal information, page content, or browsing data is included.</p>
     <p>This transmitted data:</p>
     <ul>
       <li>Contains no personal information</li>
       <li>Is not stored or logged by Couponify</li>
       <li>Is not linked to any user identity</li>
-      <li>Is only sent when you explicitly choose to search for coupons</li>
+      <li>Consists only of the page URL — never the page's content, your inputs, or login data</li>
     </ul>
 
     <h2>Data Storage</h2>
